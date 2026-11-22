@@ -71,6 +71,9 @@ before(async () => {
 
   const server = await import('../server.js');
   await server.ready;
+  // After the import: server.js loads backend/.env, which may hold real AI keys. Tests never call real AIs.
+  delete process.env.GEMINI_API_KEY;
+  delete process.env.GROQ_API_KEY;
   mongoose = (await import('mongoose')).default;
   models = {
     Admin: (await import('../models/Admin.js')).default,
@@ -437,5 +440,112 @@ test('full journey: trip, live tracking, incidents, applications, passengers', a
     for (let i = 0; i < 10; i++) await call('POST', '/auth/user/login', { email: 'victim@example.com', password: 'x' });
     assert.equal((await call('POST', '/auth/user/login', { email: 'victim@example.com', password: 'x' })).status, 429);
     assert.equal((await call('POST', '/auth/user/login', { email: 'other@example.com', password: 'x' })).status, 401);
+  });
+});
+
+test('bus pass, admin passengers page, Disha assistant', async (t) => {
+  const admin = (await call('POST', '/auth/admin/login', { email: 'boss@example.com', password: 'adminpass1' })).data.token;
+  const riya = (await call('POST', '/auth/user/login', { email: 'riya.passenger@demo.local', password: 'Demo@1234' })).data.token;
+  const neha = (await call('POST', '/auth/user/login', { email: 'neha.passenger@demo.local', password: 'Demo@1234' })).data.token;
+  assert.ok(riya && neha, 'seeded demo passengers can sign in');
+
+  await t.test('seeded history: Riya has an active monthly pass and 5 purchases', async () => {
+    const res = await call('GET', '/passenger/pass', null, riya);
+    assert.equal(res.status, 200);
+    assert.equal(res.data.active.plan, 'monthly');
+    assert.equal(res.data.history.length, 5);
+    assert.ok(new Date(res.data.history[0].createdAt) > new Date(res.data.history[4].createdAt), 'newest first');
+    assert.equal((await call('GET', '/passenger/pass')).status, 401, 'needs sign-in');
+  });
+
+  await t.test('buying passes: validation, starts now, stacks after an active pass', async () => {
+    assert.equal((await call('POST', '/passenger/pass', { plan: 'yearly', method: 'upi' }, neha)).status, 400);
+    assert.equal((await call('POST', '/passenger/pass', { plan: 'daily', method: 'cash' }, neha)).status, 400);
+    assert.equal((await call('GET', '/passenger/pass', null, neha)).data.active, null);
+
+    const first = await call('POST', '/passenger/pass', { plan: 'weekly', method: 'upi' }, neha);
+    assert.equal(first.status, 201, JSON.stringify(first.data));
+    assert.equal(first.data.pass.amount, 150);
+    assert.match(first.data.pass.transactionId, /^TXN\d+$/);
+    assert.ok(Math.abs(new Date(first.data.pass.validFrom) - Date.now()) < 60000, 'starts now');
+    assert.equal(first.data.active._id, first.data.pass._id);
+
+    const second = await call('POST', '/passenger/pass', { plan: 'daily', method: 'card' }, neha);
+    assert.equal(new Date(second.data.pass.validFrom).getTime(), new Date(first.data.pass.validUntil).getTime(), 'stacks after the active pass');
+    assert.equal(second.data.active._id, first.data.pass._id, 'the weekly pass is still the one in use');
+    assert.equal(new Date(second.data.coveredUntil).getTime(), new Date(second.data.pass.validUntil).getTime());
+    assert.equal(second.data.history.length, 2);
+  });
+
+  await t.test('admin passengers: sign-in time and pass column', async () => {
+    assert.equal((await call('GET', '/admin/passengers', null, riya)).status, 401, 'admins only');
+    const res = await call('GET', '/admin/passengers', null, admin);
+    assert.equal(res.status, 200);
+    const by = Object.fromEntries(res.data.map((u) => [u.email, u]));
+    assert.equal(by['riya.passenger@demo.local'].pass.status, 'active');
+    assert.equal(by['riya.passenger@demo.local'].purchases, 5);
+    assert.equal(by['riya.passenger@demo.local'].totalSpent, 150 + 4 * 500);
+    assert.equal(by['aman.passenger@demo.local'].pass.status, 'expired');
+    assert.equal(by['neha.passenger@demo.local'].pass.status, 'active', 'just bought one');
+    assert.equal(by['neha.passenger@demo.local'].pass.plan, 'weekly');
+    assert.ok(Date.now() - new Date(by['neha.passenger@demo.local'].lastLoginAt) < 60000, 'sign-in recorded');
+    assert.equal(by['riya.passenger@demo.local'].password, undefined);
+  });
+
+  await t.test('Disha: sign-in required, 503 without AI keys', async () => {
+    const ask = { messages: [{ role: 'user', content: 'How do I get to Sector 22?' }] };
+    assert.equal((await call('POST', '/assistant/chat', ask)).status, 401);
+    const res = await call('POST', '/assistant/chat', ask, riya);
+    assert.equal(res.status, 503);
+    assert.equal((await call('POST', '/assistant/chat', { messages: [] }, riya)).status, 400);
+  });
+
+  await t.test('Disha: runs the journey planner as a tool, falls back to Groq', async () => {
+    const realFetch = globalThis.fetch;
+    const seen = [];
+    let geminiDown = false;
+    globalThis.fetch = async (url, opts) => {
+      const u = String(url);
+      if (!u.includes('generativelanguage') && !u.includes('api.groq.com')) return realFetch(url, opts);
+      const body = JSON.parse(opts.body);
+      seen.push({ provider: u.includes('groq') ? 'groq' : 'gemini', body });
+      const reply = (message) => new Response(JSON.stringify({ choices: [{ message }] }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      if (u.includes('generativelanguage') && geminiDown) return new Response('{"error":{"message":"quota"}}', { status: 429 });
+      const last = body.messages.at(-1);
+      if (last.role === 'user') {
+        return reply({ role: 'assistant', content: null, tool_calls: [{ id: 'c1', type: 'function', extra_content: { google: { thought_signature: 'sig' } },
+          function: { name: 'plan_journey', arguments: JSON.stringify({ from_lat: STOP.isbt43.lat, from_lng: STOP.isbt43.lng, to_lat: STOP.sec22.lat, to_lng: STOP.sec22.lng, to_name: 'Sector 22' }) } }] });
+      }
+      const result = JSON.parse(last.content);
+      const ride = result.options.find((o) => !o.walk_only).steps.find((s) => s.bus_route);
+      return reply({ role: 'assistant', content: `Take route ${ride.bus_route}, about ${result.options[0].total_time}, bus at ${ride.bus_comes_at}.` });
+    };
+    process.env.GEMINI_API_KEY = 'test-gemini';
+    process.env.GROQ_API_KEY = 'test-groq';
+    try {
+      const ask = { messages: [{ role: 'user', content: 'How long to Sector 22 from ISBT 43?' }], location: STOP.isbt43, language: 'hi' };
+      const res = await call('POST', '/assistant/chat', ask, riya);
+      assert.equal(res.status, 200, JSON.stringify(res.data));
+      assert.equal(res.data.provider, 'gemini:gemini-3.8-flash');
+      assert.match(res.data.reply, /^Take route \w+, about (\d+ h( \d+ min)?|\d+ min), bus at \d{1,2}:\d{2}\s?(am|pm)\.$/i);
+      const system = seen[0].body.messages[0].content;
+      assert.match(system, /talking to Riya/);
+      assert.match(system, /Reply in Hindi/);
+      assert.match(system, /active Monthly pass/);
+      const followUp = seen[1].body.messages;
+      assert.equal(followUp.at(-2).tool_calls[0].extra_content.google.thought_signature, 'sig', 'tool calls sent back unchanged');
+      assert.equal(followUp.at(-1).role, 'tool');
+
+      geminiDown = true;
+      seen.length = 0;
+      const fallback = await call('POST', '/assistant/chat', ask, riya);
+      assert.equal(fallback.status, 200, JSON.stringify(fallback.data));
+      assert.equal(fallback.data.provider, 'groq:openai/gpt-oss-120b', 'both Gemini models down -> Groq');
+      assert.ok(seen.some((s) => s.provider === 'groq'));
+    } finally {
+      globalThis.fetch = realFetch;
+      delete process.env.GEMINI_API_KEY;
+      delete process.env.GROQ_API_KEY;
+    }
   });
 });

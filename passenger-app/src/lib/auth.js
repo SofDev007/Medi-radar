@@ -1,4 +1,4 @@
-// Passengers can use everything without an account; signing in adds arrival alerts.
+// Passengers can browse without an account; signing in adds arrival alerts, the bus pass and Disha.
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -24,6 +24,10 @@ async function registerPushToken() {
 
 export function AuthProvider({ children }) {
   const [state, setState] = useState({ ready: false, user: null, token: null });
+  const [pass, setPass] = useState(null); // { active, coveredUntil, history, plans } for the signed-in passenger
+
+  const refreshPass = useCallback(() => api.get('/passenger/pass').then(setPass).catch(() => {}), []);
+  useEffect(() => { if (state.token) refreshPass(); else setPass(null); }, [state.token, refreshPass]);
 
   useEffect(() => {
     (async () => {
@@ -57,7 +61,10 @@ export function AuthProvider({ children }) {
     setState({ ready: true, user: null, token: null });
   }, []);
 
-  const value = useMemo(() => ({ ...state, signIn, register, signInWithGoogle, signOut }), [state, signIn, register, signInWithGoogle, signOut]);
+  // Live tracking needs a pass that is valid right now.
+  const hasPass = Boolean(pass?.active && new Date(pass.active.validUntil).getTime() > Date.now());
+  const value = useMemo(() => ({ ...state, signIn, register, signInWithGoogle, signOut, pass, hasPass, refreshPass, setPass }),
+    [state, signIn, register, signInWithGoogle, signOut, pass, hasPass, refreshPass]);
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 

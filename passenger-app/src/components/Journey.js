@@ -8,6 +8,13 @@ import { Ticket, RouteBadge, Stamp } from 'transit-shared/native/ui';
 import { useTheme, routeStock, stocks, stockInk } from 'transit-shared/native/theme';
 import { formatDistance } from 'transit-shared/geo.js';
 
+/** A trip length for display: 45 -> ['45', 'min'], 325 -> ['5 h', '25 min'] (people read hours, not '325 min'). */
+export function durationParts(minutes, t) {
+  if (minutes < 60) return [String(minutes), t('common.min')];
+  const m = minutes % 60;
+  return [t('common.hoursShort', { count: Math.floor(minutes / 60) }), m ? t('common.minutes', { count: m }) : ''];
+}
+
 /** Wait line for the first bus: live / timetable / estimate. */
 export function waitText(leg, t, language) {
   if (leg.waitSource === 'live' && leg.bus) return t('passenger.busLive', { bus: leg.bus.busNumber, count: leg.waitMinutes });
@@ -26,6 +33,7 @@ export function JourneyTicket({ option, best, selected, onPress }) {
   const rides = option.legs.filter((l) => l.type === 'ride');
   const first = rides[0];
   const stock = first ? routeStock(first.route) : stocks.sky;
+  const [big, small] = durationParts(option.totalMinutes, t);
   return (
     <Ticket
       onPress={onPress}
@@ -34,8 +42,8 @@ export function JourneyTicket({ option, best, selected, onPress }) {
       style={selected ? { borderColor: theme.night ? '#3EE6FF' : theme.ink, borderWidth: 2 } : null}
       stub={(
         <View style={{ alignItems: 'center' }}>
-          <T variant="displaySm" color={stockInk(stock, theme)}>{option.totalMinutes}</T>
-          <T variant="bodyStrong" color={stockInk(stock, theme)}>{t('common.min')}</T>
+          <T variant="displaySm" color={stockInk(stock, theme)}>{big}</T>
+          {small ? <T variant="bodyStrong" color={stockInk(stock, theme)}>{small}</T> : null}
         </View>
       )}
     >
@@ -151,7 +159,7 @@ function JourneyCard({ option, index, x, best, destination, onPress }) {
           {first ? <RouteBadge route={first.route} /> : <Ionicons name="walk" size={22} color={theme.ink} />}
           <T variant="small" color={theme.inkSoft} numberOfLines={1} style={{ flex: 1 }}>{t('passenger.towards', { place: destination })}</T>
         </View>
-        <T variant="display" style={{ marginTop: 10, fontSize: 40, lineHeight: 42 }}>{option.totalMinutes}<T variant="small" color={theme.inkSoft}> {t('common.min')}</T></T>
+        <T variant="display" style={{ marginTop: 10, fontSize: 40, lineHeight: 42 }}>{durationParts(option.totalMinutes, t)[0]}<T variant="small" color={theme.inkSoft}> {durationParts(option.totalMinutes, t)[1]}</T></T>
         <T variant="small" color={theme.inkFaint} numberOfLines={2} style={{ marginTop: 6, fontSize: 12.5, lineHeight: 17 }}>{meta}</T>
         {best && <Stamp kind="live" style={{ marginTop: 8 }}>{t('passenger.best')}</Stamp>}
       </Pressable>

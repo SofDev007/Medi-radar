@@ -38,6 +38,7 @@ export const authAPI = {
 
 export const adminAPI = {
   summary: () => api.get('/admin/summary'),
+  passengers: () => api.get('/admin/passengers'),
 };
 
 export const busAPI = {

@@ -16,6 +16,10 @@
       "channel": "preview",
       "android": {
         "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://citybus-api.onrender.com/api",
+        "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID": "549605408325-f5scb0qvu92e3qotm6chn9d03br5pfft.apps.googleusercontent.com"
       }
     },
     "production": {

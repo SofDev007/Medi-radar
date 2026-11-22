@@ -119,8 +119,10 @@ export function animateFlow(map, layerIds, { reduceMotion = prefersReducedMotion
 }
 
 // ─── Bus markers ────────────────────────────────────────────────────────────────────────────
+// Marker elements must stay position:absolute (MapLibre positions markers with top/left 0 + a transform).
+// position:relative here made every marker flow below the previous one: bus N drawn N×28 px too low, off its route.
 const CSS = `
-.ng-bus{position:relative;width:28px;height:28px;display:grid;place-items:center;cursor:pointer;background:none;border:0;padding:0;--c:#3EE6FF}
+.ng-bus{position:absolute;width:28px;height:28px;display:grid;place-items:center;cursor:pointer;background:none;border:0;padding:0;--c:#3EE6FF}
 .ng-bus .ng-core{width:14px;height:14px;border-radius:50%;background:var(--c);box-shadow:0 0 12px var(--c);display:grid;place-items:center;transition:transform .18s cubic-bezier(.16,1,.3,1)}
 .ng-bus .ng-core::after{content:'';width:6px;height:6px;border-radius:50%;background:#fff}
 .ng-bus .ng-ring{position:absolute;inset:4px;border-radius:50%;border:1.5px solid var(--c);animation:ng-pulse 1.6s ease-out infinite}
@@ -137,7 +139,7 @@ const CSS = `
 .ng-chip b{color:var(--c);font-weight:700}
 .ng-chip[data-hidden=true]{opacity:0}
 .chips-off .ng-chip{display:none}
-.ng-me{width:14px;height:14px;border-radius:50%;background:#fff;border:3px solid #3EE6FF;box-shadow:0 0 12px #3EE6FF;position:relative}
+.ng-me{width:14px;height:14px;border-radius:50%;background:#fff;border:3px solid #3EE6FF;box-shadow:0 0 12px #3EE6FF;position:absolute}
 .ng-me::before{content:'';position:absolute;left:50%;top:50%;width:44px;height:44px;margin:-22px;border-radius:50%;background:rgba(62,230,255,.15);animation:ng-me 2s ease-out infinite}
 @keyframes ng-me{from{transform:scale(.6);opacity:1}to{transform:scale(1.8);opacity:0}}
 .ng-pin{font:700 12px 'Anek Latin',system-ui,sans-serif;color:#04060C;padding:3px 8px;border-radius:8px;transform:translateY(-4px);box-shadow:0 0 14px currentColor}

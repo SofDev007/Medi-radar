@@ -70,3 +70,15 @@ const trail = data.features[0].geometry.coordinates;
 assert.ok(trail.some((p) => p[0] === 75.81 && p[1] === 22.70), 'an on-route trail bends at the corner');
 assert.ok(trail.every((p) => off(p) < 0.5), 'trail lies on the route');
 console.log('buses on route ok');
+
+// Map markers stay absolutely positioned (position:relative made each bus N×28 px too low, off its route).
+{
+  const { injectNeonMapCss } = await import('./neonMap.js');
+  let css = '';
+  injectNeonMapCss({ getElementById: () => null, createElement: () => ({}), head: { append: (el) => { css = el.textContent; } } });
+  for (const cls of ['ng-bus', 'ng-me']) {
+    const rule = css.match(new RegExp(`\\.${cls}\\{([^}]*)\\}`))?.[1] || '';
+    assert.match(rule, /position:absolute/, `.${cls} must be position:absolute`);
+  }
+  console.log('marker positioning ok');
+}

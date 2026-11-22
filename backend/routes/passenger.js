@@ -1,7 +1,10 @@
 import express from 'express';
+import { randomInt } from 'crypto';
 import { body } from 'express-validator';
 import User from '../models/User.js';
 import Route from '../models/Route.js';
+import Pass from '../models/Pass.js';
+import { PASS_PLANS, PAYMENT_METHODS, passWindow } from '../../shared/passes.js';
 import { authenticateUser } from '../middleware/auth.js';
 import { validate, isObjectId } from '../middleware/validate.js';
 import { isExpoPushToken } from '../services/push.js';
@@ -32,6 +35,29 @@ router.post('/arrival-alerts', [
 router.delete('/arrival-alerts/:stopId', (req, res) => {
   removeArrivalWatch(req.user._id, req.params.stopId);
   res.json({ message: 'Alert removed' });
+});
+
+// ---------- Bus pass (payment is simulated: every purchase succeeds) ----------
+
+router.get('/pass', async (req, res) => {
+  res.json(await Pass.statusFor(req.user._id));
+});
+
+router.post('/pass', [
+  body('plan').isIn(Object.keys(PASS_PLANS)),
+  body('method').isIn(PAYMENT_METHODS)
+], validate, async (req, res) => {
+  const { plan, method } = req.body;
+  const { coveredUntil } = await Pass.statusFor(req.user._id);
+  const pass = await Pass.create({
+    user: req.user._id,
+    plan,
+    amount: PASS_PLANS[plan].price,
+    method,
+    transactionId: `TXN${Date.now()}${randomInt(1000, 9999)}`,
+    ...passWindow(plan, coveredUntil)
+  });
+  res.status(201).json({ pass, ...(await Pass.statusFor(req.user._id)) });
 });
 
 export default router;
