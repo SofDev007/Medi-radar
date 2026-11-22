@@ -8,6 +8,7 @@ import { MAP_STYLE_URL, MAP_STYLE_DARK_URL, INDIA_VIEW, loadMapLibre } from 'tra
 import { applyNightGlassStyle, addNeonRouteLayers, injectNeonMapCss, glideMarker, startOnRoute, placeOnRoute } from 'transit-shared/neonMap.js';
 
 const EMPTY = { type: 'FeatureCollection', features: [] };
+const FOLLOW_PAUSE_MS = 6000; // after the driver touches the map, wait this long before recentring on the bus
 let maplibregl; // set by loadMapLibre(); see mapConfig.js for why it isn't imported
 const line = (coordinates, color) => (coordinates?.length > 1 ? { type: 'Feature', properties: { color }, geometry: { type: 'LineString', coordinates } } : EMPTY);
 
@@ -19,7 +20,25 @@ export default function RouteMap({ path = [], stops = [], nextIndex = 0, positio
   const marker = useRef(null);
   const bus = useRef({ raf: 0, onRoute: null }); // glideMarker entry for the bus marker
   const latest = useRef({});
-  latest.current = { path, stops, nextIndex, detour, ink, position };
+  latest.current = { path, stops, nextIndex, detour, ink, position, follow, reduceMotion };
+  // Touching the map (pan, pinch-zoom, rotate) pauses following; it recentres on the bus once the
+  // driver has left the map alone for FOLLOW_PAUSE_MS.
+  const pausedUntil = useRef(0);
+  const resumeTimer = useRef(0);
+  const shownAt = useRef(null); // where the bus marker is drawn (camera target)
+
+  const recentre = () => {
+    const m = map.current;
+    const s = latest.current;
+    if (!m || !s.follow || !shownAt.current || Date.now() < pausedUntil.current) return;
+    m.easeTo({ center: shownAt.current, zoom: Math.max(m.getZoom(), 15), duration: s.reduceMotion ? 0 : 900, easing: (x) => 1 - Math.pow(1 - x, 3) });
+  };
+  const pauseFollow = () => {
+    pausedUntil.current = Date.now() + FOLLOW_PAUSE_MS;
+    clearTimeout(resumeTimer.current);
+    resumeTimer.current = setTimeout(recentre, FOLLOW_PAUSE_MS + 50);
+  };
+  useEffect(() => () => clearTimeout(resumeTimer.current), []);
 
   // Night Glass palette (ink = the route's neon there).
   const c = night
@@ -66,6 +85,9 @@ export default function RouteMap({ path = [], stops = [], nextIndex = 0, positio
     });
     map.current = m;
     marker.current = null; // a new map needs a new marker
+    // Any touch, drag, pinch, wheel or rotate by the driver (camera moves we make have no originalEvent).
+    for (const type of ['touchstart', 'touchmove', 'mousedown', 'wheel']) m.on(type, pauseFollow);
+    for (const type of ['movestart', 'move', 'zoomstart', 'rotatestart', 'pitchstart']) m.on(type, (e) => { if (e.originalEvent) pauseFollow(); });
     m.on('load', () => {
       m.addSource('route', { type: 'geojson', data: EMPTY });
       m.addSource('detour', { type: 'geojson', data: EMPTY });
@@ -120,8 +142,8 @@ export default function RouteMap({ path = [], stops = [], nextIndex = 0, positio
     }
     marker.current.setRotation(position.heading || 0);
     glideMarker(bus.current, to, { ms: 900, reduceMotion, path: routePath });
-    const shown = placeOnRoute(routePath, to)?.lngLat || to;
-    if (follow) m.easeTo({ center: shown, zoom: Math.max(m.getZoom(), 15), duration: reduceMotion ? 0 : 900, easing: (x) => 1 - Math.pow(1 - x, 3) });
+    shownAt.current = placeOnRoute(routePath, to)?.lngLat || to;
+    recentre(); // skipped while the driver is touching the map (resumes FOLLOW_PAUSE_MS later)
   }, [position, follow, stock, ready, detour]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (

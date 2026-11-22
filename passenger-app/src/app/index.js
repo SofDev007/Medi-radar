@@ -1,4 +1,6 @@
 // Map-first home: From / Where to → nearest stop + best buses (journey planner), live buses, SOS.
+// Live tracking (bus markers, live arrivals, bus detail, arrival alerts) needs an active bus pass;
+// stop search, the journey planner, Disha and SOS stay free.
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, View, useWindowDimensions } from 'react-native';
 import { useRouter } from 'expo-router';
@@ -18,7 +20,7 @@ import { useReducedMotion } from 'react-native-reanimated';
 import PassengerMap from '../components/PassengerMap';
 import BottomSheet from '../components/BottomSheet';
 import LivePill from '../components/LivePill';
-import { JourneyTicket, JourneyCarousel, LegList, Row } from '../components/Journey';
+import { JourneyTicket, JourneyCarousel, LegList, Row, durationParts } from '../components/Journey';
 import { useLive } from '../lib/live';
 import { useAuth } from '../lib/auth';
 import { usePosition } from '../lib/position';
@@ -94,6 +96,23 @@ function Arrival({ bus, route, minutes, onPress }) {
   );
 }
 
+/** Shown in place of live tracking when the passenger has no active pass. */
+function PassLock({ onPress }) {
+  const { t } = useTranslation();
+  const theme = useTheme();
+  return (
+    <Ticket>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+        <Ionicons name="lock-closed" size={20} color={theme.ink} />
+        <T variant="title" style={{ flex: 1 }}>{t('pass.lockTitle')}</T>
+      </View>
+      <T variant="small" color={theme.inkSoft} style={{ marginTop: 6 }}>{t('pass.lockBody')}</T>
+      <Button title={t('pass.getPass')} size="sm" style={{ marginTop: 12 }} onPress={onPress}
+        icon={<Ionicons name="ticket-outline" size={18} color={theme.onPrimary} />} />
+    </Ticket>
+  );
+}
+
 export default function Home() {
   const { t } = useTranslation();
   const theme = useTheme();
@@ -101,7 +120,7 @@ export default function Home() {
   const insets = useSafeAreaInsets();
   const { height: screenH } = useWindowDimensions();
   const { buses: liveMap, routes, getRoute, alert, clearAlert } = useLive();
-  const { user } = useAuth();
+  const { user, hasPass } = useAuth();
   const { position, status: locStatus } = usePosition();
   const trip = useTrip();
   const [snap, setSnap] = useState('half');
@@ -162,7 +181,7 @@ export default function Home() {
   }, [option, getRoute, theme.night]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Selected bus: its route for the stops-ahead list.
-  const bus = busId ? liveMap[busId] : null;
+  const bus = busId && hasPass ? liveMap[busId] : null;
   useEffect(() => {
     if (!bus?.routeId) { setBusRoute(null); return; }
     getRoute(bus.routeId).then(setBusRoute).catch(() => setBusRoute(null));
@@ -183,7 +202,7 @@ export default function Home() {
   const optionRoutes = new Set(option?.legs.filter((l) => l.type === 'ride').map((l) => l.route.id));
   // ETA chips: buses relevant to the selected journey (their boarding stop) or to the nearest stop.
   const chipStopId = option?.legs.find((l) => l.type === 'ride')?.from.id || nearest[0]?.id;
-  const mapBuses = buses.map((b) => {
+  const mapBuses = !hasPass ? [] : buses.map((b) => {
     const eta = chipStopId ? b.etas?.find((e) => e.stopId === chipStopId) : null;
     const relevant = option ? optionRoutes.has(b.routeId) : Boolean(eta);
     return {
@@ -249,6 +268,7 @@ export default function Home() {
 
   const notifyMe = async (leg) => {
     if (!user) { router.push('/signin'); setNotice(t('passenger.notifyNeedsSignIn')); return; }
+    if (!hasPass) { router.push('/pass'); setNotice(t('pass.lockTitle')); return; }
     try {
       await api.post('/passenger/arrival-alerts', { routeId: leg.route.id, stopId: leg.from.id, stopsBefore: 2 });
       setNotice(t('passenger.notifySet'));
@@ -318,7 +338,7 @@ export default function Home() {
         <Pressable onPress={() => setSelected(null)} style={styles.sheetHead} accessibilityRole="button">
           <Ionicons name="chevron-back" size={22} color={theme.ink} />
           <T variant="title" style={{ flex: 1 }}>{t('passenger.options')}</T>
-          <T variant="displaySm" style={{ fontSize: 28, lineHeight: 30 }}>{option.totalMinutes}<T variant="small" weight={600}> {t('common.min')}</T></T>
+          <T variant="displaySm" style={{ fontSize: 28, lineHeight: 30 }}>{durationParts(option.totalMinutes, t)[0]}<T variant="small" weight={600}> {durationParts(option.totalMinutes, t)[1]}</T></T>
         </Pressable>
       );
       body = (
@@ -366,14 +386,15 @@ export default function Home() {
             </View>
           </Ticket>
         )}
-        {nearestStop && (() => {
+        {!hasPass && <PassLock onPress={() => router.push('/pass')} />}
+        {hasPass && nearestStop && (() => {
           const arrivals = arrivalsAt(nearestStop.id);
           return arrivals.length
             ? <View>{arrivals.slice(0, 4).map(({ bus: b, eta }) => <Arrival key={b.busId} bus={b} route={busRouteObj(b)} minutes={eta.minutes} onPress={() => setBusId(b.busId)} />)}</View>
             : <T variant="small" color={theme.inkFaint}>{t('passenger.noArrivals')}</T>;
         })()}
-        <T variant="title" style={{ marginTop: 6 }}>{t('passenger.liveBuses')}</T>
-        {buses.length === 0 ? <T variant="small" color={theme.inkFaint}>{t('passenger.noBusesLive')}</T> : (
+        {hasPass && <T variant="title" style={{ marginTop: 6 }}>{t('passenger.liveBuses')}</T>}
+        {!hasPass ? null : buses.length === 0 ? <T variant="small" color={theme.inkFaint}>{t('passenger.noBusesLive')}</T> : (
           <View>
             {buses.map((b) => <Arrival key={b.busId} bus={b} route={busRouteObj(b)} minutes={b.nextStop?.etaMinutes} onPress={() => { setBusId(b.busId); setSnap('half'); }} />)}
           </View>
@@ -420,11 +441,18 @@ export default function Home() {
               onClear={() => { tripStore.set({ to: null }); setBusId(null); }}
             />
           </View>
-          <Pressable onPress={() => router.push('/settings')} accessibilityLabel={t('common.settings')}>
-            <Glass overMap radius={24} style={styles.roundBtn}>
-              <Ionicons name={user ? 'person' : 'person-outline'} size={22} color={theme.ink} />
-            </Glass>
-          </Pressable>
+          <View style={{ gap: 10 }}>
+            <Pressable onPress={() => router.push('/settings')} accessibilityLabel={t('common.settings')}>
+              <Glass overMap radius={24} style={styles.roundBtn}>
+                <Ionicons name={user ? 'person' : 'person-outline'} size={22} color={theme.ink} />
+              </Glass>
+            </Pressable>
+            <Pressable onPress={() => router.push('/disha')} accessibilityLabel={t('disha.open')}>
+              <Glass overMap radius={24} style={styles.roundBtn}>
+                <Ionicons name="sparkles" size={21} color={theme.night ? neon.cyan : theme.ink} />
+              </Glass>
+            </Pressable>
+          </View>
         </View>
         {alert && (
           <Pressable onPress={clearAlert} style={{ marginTop: 10 }}><Banner tone="ok">{alert.text}</Banner></Pressable>

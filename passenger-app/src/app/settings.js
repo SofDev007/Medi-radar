@@ -32,6 +32,8 @@ export default function Settings() {
           <>
             <T variant="bodyStrong">{t('passenger.signedInAs', { name: user.name })}</T>
             <T variant="small" color={theme.inkFaint}>{user.email}</T>
+            <Button title={t('pass.menu')} size="sm" style={{ marginTop: 12 }} onPress={() => router.push('/pass')}
+              icon={<Ionicons name="ticket-outline" size={18} color={theme.onPrimary} />} />
             <Button title={t('common.signOut')} variant="secondary" size="sm" style={{ marginTop: 12 }} onPress={signOut} />
           </>
         ) : (

@@ -1,6 +1,6 @@
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
-import { LayoutGrid, Map, Siren, UserCheck, Route as RouteIcon, Bus, Users, BarChart3, LogOut } from 'lucide-react';
+import { LayoutGrid, Map, Siren, UserCheck, Route as RouteIcon, Bus, Users, UserRound, BarChart3, LogOut } from 'lucide-react';
 import { useRealtime } from '@/lib/realtime';
 import { cn } from '@/lib/utils';
 
@@ -12,6 +12,7 @@ const NAV = [
   { to: '/routes', label: 'Routes & stops', icon: RouteIcon },
   { to: '/buses', label: 'Buses', icon: Bus },
   { to: '/drivers', label: 'Drivers', icon: Users },
+  { to: '/passengers', label: 'Passengers', icon: UserRound },
   { to: '/analytics', label: 'Reports', icon: BarChart3 }
 ];
 

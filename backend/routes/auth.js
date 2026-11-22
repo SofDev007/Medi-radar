@@ -24,6 +24,12 @@ const userJson = (user) => ({
   role: 'user'
 });
 
+/** Passenger sign-in response; also records the sign-in time for the admin Passengers page. */
+const userSession = async (user) => {
+  await User.updateOne({ _id: user._id }, { lastLoginAt: new Date() });
+  return { token: signToken(user._id, 'user'), user: userJson(user) };
+};
+
 const driverJson = (driver) => ({
   id: driver._id,
   name: driver.name,
@@ -203,7 +209,7 @@ router.post('/user/register', loginLimiter, [
     return res.status(400).json({ message: 'Email already registered' });
   }
   const user = await User.create({ name, email, password, phone: phone || '', authProvider: 'local' });
-  res.status(201).json({ token: signToken(user._id, 'user'), user: userJson(user) });
+  res.status(201).json(await userSession(user));
 });
 
 router.post('/user/login', loginLimiter, [
@@ -218,7 +224,7 @@ router.post('/user/login', loginLimiter, [
   if (!user.isActive) {
     return res.status(403).json({ message: 'User account is inactive' });
   }
-  res.json({ token: signToken(user._id, 'user'), user: userJson(user) });
+  res.json(await userSession(user));
 });
 
 router.get('/google/config', (req, res) => {
@@ -266,10 +272,11 @@ router.post('/user/google', rateLimit({ windowMs: 15 * 60 * 1000, max: 30 }), [
   if (!user.isActive) {
     return res.status(403).json({ message: 'User account is inactive' });
   }
-  res.json({ token: signToken(user._id, 'user'), user: userJson(user) });
+  res.json(await userSession(user));
 });
 
-router.get('/user/me', authenticateUser, (req, res) => {
+router.get('/user/me', authenticateUser, async (req, res) => {
+  await User.updateOne({ _id: req.user._id }, { lastLoginAt: new Date() }); // app opened
   res.json({ user: userJson(req.user) });
 });
 

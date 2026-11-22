@@ -11,6 +11,9 @@ import Stop from '../models/Stop.js';
 import Route from '../models/Route.js';
 import Bus from '../models/Bus.js';
 import Driver from '../models/Driver.js';
+import User from '../models/User.js';
+import Pass from '../models/Pass.js';
+import { PASS_PLANS } from '../../shared/passes.js';
 import { getDirections } from '../services/routing.js';
 import { saveDocument, parseImageDataUrl } from '../services/storage.js';
 
@@ -143,10 +146,43 @@ export async function seed({ city = 'indore', log = console.log } = {}) {
     });
   }
   log(`Pending applications: ${APPLICANTS.length}`);
+  await seedPassengers();
+  log(`Demo passengers: ${DEMO_PASSENGERS.map((p) => p.email).join(', ')} (password ${DEMO_DRIVER_PASSWORD})`);
   return { stopIds, routeIds, drivers: BUSES.map((b) => b.driver) };
 }
 
-export const cityArg = () => process.argv.find((a) => a.startsWith('--city='))?.slice(7);
+// Demo passengers for the bus pass feature. Purchases are dated relative to seeding: Riya always has an
+// active monthly pass (bought 5 days ago) plus a purchase history; Aman's weekly pass has expired; Neha has none.
+const DAY = 86400000;
+export const DEMO_PASSENGERS = [
+  {
+    name: 'Riya Sharma', email: 'riya.passenger@demo.local', phone: '+91 98260 11111', lastSeenHoursAgo: 1,
+    passes: [['weekly', 110, 'card'], ['monthly', 95, 'upi'], ['monthly', 65, 'upi'], ['monthly', 35, 'card'], ['monthly', 5, 'upi']]
+  },
+  { name: 'Aman Gupta', email: 'aman.passenger@demo.local', phone: '+91 98260 22222', lastSeenHoursAgo: 26, passes: [['weekly', 20, 'card']] },
+  { name: 'Neha Patel', email: 'neha.passenger@demo.local', phone: '+91 98260 33333', lastSeenHoursAgo: 50, passes: [] }
+];
+
+async function seedPassengers(now = Date.now()) {
+  for (const p of DEMO_PASSENGERS) {
+    if (await User.exists({ email: p.email })) continue; // keep existing accounts and their history
+    const user = await User.create({
+      name: p.name, email: p.email, phone: p.phone, password: DEMO_DRIVER_PASSWORD, authProvider: 'local',
+      lastLoginAt: new Date(now - p.lastSeenHoursAgo * 3600000)
+    });
+    await Pass.insertMany(p.passes.map(([plan, daysAgo, method], i) => {
+      const validFrom = new Date(now - daysAgo * DAY);
+      return {
+        user: user._id, plan, method, amount: PASS_PLANS[plan].price, validFrom,
+        validUntil: new Date(validFrom.getTime() + PASS_PLANS[plan].days * DAY),
+        transactionId: `TXN${validFrom.getTime()}${1000 + i}`,
+        createdAt: validFrom, updatedAt: validFrom // purchase date
+      };
+    }), { timestamps: false });
+  }
+}
+
+export const cityArg =() => process.argv.find((a) => a.startsWith('--city='))?.slice(7);
 
 // Run directly: node scripts/seed.js [--city=...]
 if (process.argv[1]?.replace(/\\/g, '/').endsWith('scripts/seed.js')) {

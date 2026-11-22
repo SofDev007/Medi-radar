@@ -17,6 +17,7 @@ const userSchema = new mongoose.Schema(
     avatarUrl: { type: String, default: '' },
     role: { type: String, default: 'user' },
     isActive: { type: Boolean, default: true },
+    lastLoginAt: { type: Date, default: null }, // last sign-in or app open (admin Passengers page)
     pushTokens: { type: [String], default: [] }
   },
   { timestamps: true }

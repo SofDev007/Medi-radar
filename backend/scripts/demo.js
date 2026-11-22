@@ -16,6 +16,7 @@ if (!(await Admin.exists({ email: 'admin@demo.local' }))) {
   await Admin.create({ username: 'admin', email: 'admin@demo.local', password: 'Demo@1234' });
 }
 console.log('\nDemo ready. Admin: admin@demo.local / Demo@1234');
+console.log('Passengers: riya.passenger@demo.local (active pass + history), neha.passenger@demo.local (no pass) / Demo@1234');
 
 if (!process.argv.includes('--no-sim')) {
   const { simulate } = await import('./simulate.js');

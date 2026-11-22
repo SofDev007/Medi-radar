@@ -176,3 +176,11 @@ test('Indore demo data is consistent', async () => {
   assert.equal(new Set(plates).size, plates.length);
   for (const [, lat, lng] of Object.values(city.stops)) assert.ok(lat > 22.55 && lat < 22.85 && lng > 75.7 && lng < 76.02, 'stop outside Indore');
 });
+
+test('Disha durations read as hours past 60 minutes', async () => {
+  const { duration } = await import('../services/disha.js');
+  assert.equal(duration(7), '7 min');
+  assert.equal(duration(60), '1 h');
+  assert.equal(duration(291), '4 h 51 min');
+  assert.equal(duration(325), '5 h 25 min');
+});

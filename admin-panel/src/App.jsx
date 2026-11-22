@@ -9,6 +9,7 @@ import LiveMap from './pages/LiveMap';
 import Alerts from './pages/Alerts';
 import RouteEditor from './pages/RouteEditor';
 import Analytics from './pages/Analytics';
+import Passengers from './pages/Passengers';
 import Layout from './components/Layout';
 import { RealtimeProvider } from './lib/realtime';
 
@@ -42,6 +43,7 @@ function App() {
           <Route path="/routes" element={<RouteEditor />} />
           <Route path="/buses" element={<BusManagement />} />
           <Route path="/drivers" element={<DriverManagement />} />
+          <Route path="/passengers" element={<Passengers />} />
           <Route path="/analytics" element={<Analytics />} />
         </Route>
         <Route path="*" element={<Navigate to="/" />} />

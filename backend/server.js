@@ -16,6 +16,7 @@ import transitRoutes from './routes/transit.js';
 import routingRoutes from './routes/routing.js';
 import passengerRoutes from './routes/passenger.js';
 import adminRoutes from './routes/admin.js';
+import assistantRoutes from './routes/assistant.js';
 import { setupSocket } from './socket.js';
 import { setIO } from './services/realtime.js';
 import { runMigrations } from './migrations.js';
@@ -62,6 +63,7 @@ app.use('/api/transit', transitRoutes);
 app.use('/api/routing', routingRoutes);
 app.use('/api/passenger', passengerRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/assistant', assistantRoutes);
 
 // Health check (also pinged by a cron job to keep the free server awake)
 app.get('/api/health', (req, res) => {
