@@ -4,6 +4,8 @@ const tripSchema = new mongoose.Schema({
   bus: { type: mongoose.Schema.Types.ObjectId, ref: 'Bus', required: true },
   driver: { type: mongoose.Schema.Types.ObjectId, ref: 'Driver', required: true },
   route: { type: mongoose.Schema.Types.ObjectId, ref: 'Route', default: null },
+  // 'return' = the same route driven back from its last stop to its first (not a separate route).
+  direction: { type: String, enum: ['outbound', 'return'], default: 'outbound' },
   startTime: { type: Date, required: true },
   endTime: { type: Date, default: null },
   // The scheduled departure this trip was matched to (for delay calculation), if any.

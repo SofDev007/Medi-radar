@@ -3,6 +3,7 @@
 // States:   'O' origin, 'D' destination,
 //           'S:<stop>'            standing at a stop (on foot),
 //           'R:<route>:<i>'       aboard route at its i-th stop.
+//           Every route is in the graph twice: outbound and its return trip (key `<route>~r`).
 // Edges:    O -> S (walk, stops within 1 km)      S -> D (walk, stops within 1 km of destination)
 //           S -> S (walk transfer, stops within 400 m)
 //           S -> R (board: wait for next bus + 1 min penalty)   R:i -> R:i+1 (ride)   R -> S (alight)
@@ -11,7 +12,7 @@
 // arrive earlier by leaving later (FIFO).
 import Route from '../models/Route.js';
 import { haversine, walkMinutes } from '../../shared/geo.js';
-import { compileRoute, nextLiveArrival } from './liveTracker.js';
+import { compileRoute, reverseRoute, nextLiveArrival } from './liveTracker.js';
 import { nextScheduledArrival } from './schedule.js';
 
 export const PLANNER = {
@@ -67,10 +68,11 @@ class MinHeap {
 export function buildGraph(compiledRoutes) {
   const stops = new Map(); // stopId -> { id, name, lat, lng }
   const stopRoutes = new Map(); // stopId -> [{ routeId, index }]
-  const routes = new Map(); // routeId -> { ..., stopIds, rideMinutes[] }
+  const routes = new Map(); // route key -> { id, direction, ..., stops, rideMinutes[] }
 
   for (const r of compiledRoutes) {
     if (r.stops.length < 2) continue;
+    const key = r.direction === 'return' ? `${r.id}~r` : r.id;
     const rideMinutes = [];
     for (let i = 0; i < r.stops.length - 1; i++) {
       const a = r.stops[i];
@@ -79,12 +81,12 @@ export function buildGraph(compiledRoutes) {
       const byDistance = Math.max(b.along - a.along, haversine(a, b)) / PLANNER.defaultSpeed / 60;
       rideMinutes.push(Math.max(0.5, scheduled > 0 ? scheduled : byDistance));
     }
-    routes.set(r.id, { id: r.id, number: r.number, name: r.name, color: r.color, departures: r.departures,
-      stops: r.stops, rideMinutes });
+    routes.set(key, { id: r.id, direction: r.direction || 'outbound', number: r.number, name: r.name, color: r.color,
+      departures: r.departures, stops: r.stops, rideMinutes });
     r.stops.forEach((s, index) => {
       stops.set(s.id, { id: s.id, name: s.name, lat: s.lat, lng: s.lng });
       if (!stopRoutes.has(s.id)) stopRoutes.set(s.id, []);
-      stopRoutes.get(s.id).push({ routeId: r.id, index });
+      stopRoutes.get(s.id).push({ routeId: key, index });
     });
   }
 
@@ -113,7 +115,7 @@ export function invalidateGraph() {
 
 export function getGraph() {
   graphPromise ||= Route.find().populate('stops.stop')
-    .then((docs) => buildGraph(docs.map(compileRoute)))
+    .then((docs) => buildGraph(docs.map(compileRoute).flatMap((r) => [r, reverseRoute(r)])))
     .catch((error) => { graphPromise = null; throw error; });
   return graphPromise;
 }
@@ -127,7 +129,7 @@ export function getGraph() {
 export function makeWaitFor(now = new Date()) {
   return (route, index, arrive) => {
     const stop = route.stops[index];
-    const live = nextLiveArrival(route.id, stop.id, arrive);
+    const live = nextLiveArrival(route.id, stop.id, arrive, route.direction);
     if (live) return { minutes: Math.max(0, live.minutes - arrive), source: 'live', bus: live };
     const scheduled = nextScheduledArrival(route.departures, stop.offsetMinutes,
       new Date(now.getTime() + arrive * 60000));
@@ -172,7 +174,7 @@ function dijkstra(graph, from, to, waitFor, bannedRoutes) {
       }
       for (const { routeId, index } of graph.stopRoutes.get(stopId) || []) {
         const route = graph.routes.get(routeId);
-        if (bannedRoutes.has(routeId) || index >= route.stops.length - 1) continue;
+        if (bannedRoutes.has(route.id) || index >= route.stops.length - 1) continue;
         const wait = waitFor(route, index, cost);
         relax(`R:${routeId}:${index}`, cost + wait.minutes + PLANNER.boardPenaltyMinutes, node,
           { type: 'board', wait });
@@ -221,7 +223,8 @@ function toLegs(graph, chain, from, to) {
       const alightIndex = Number(chain[j - 1].node.split(':')[2]);
       legs.push({
         type: 'ride',
-        route: { id: route.id, number: route.number, name: route.name, color: route.color },
+        route: { id: route.id, number: route.number, name: route.name, color: route.color,
+          direction: route.direction, towards: route.stops.at(-1).name },
         from: graph.stops.get(route.stops[boardIndex].id),
         to: graph.stops.get(route.stops[alightIndex].id),
         stops: alightIndex - boardIndex,
@@ -285,9 +288,9 @@ export async function nearestServedStops(point, limit = 3, maxMeters = 3000) {
     .map((s) => ({
       ...s,
       walkMinutes: Math.round(walkMinutes(s.meters)),
-      routes: (graph.stopRoutes.get(s.id) || []).map(({ routeId }) => {
+      routes: [...new Map((graph.stopRoutes.get(s.id) || []).map(({ routeId }) => {
         const r = graph.routes.get(routeId);
-        return { id: r.id, number: r.number, name: r.name, color: r.color };
-      })
+        return [r.id, { id: r.id, number: r.number, name: r.name, color: r.color }];
+      })).values()] // each route once, though it stops here in both directions
     }));
 }

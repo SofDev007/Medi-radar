@@ -1,5 +1,6 @@
 // Bus simulator for demos: signs in as the demo drivers, starts trips and drives each bus along its
 // route path, sending GPS pings through the real API (so ETAs, sockets and the admin map all update).
+// Each trip starts where the last one ended, so buses run their route there and back (return trips).
 // Usage: node scripts/simulate.js [apiBase=http://localhost:5000/api] [driverCount=12]
 import { buildPathIndex, pointAtDistance } from '../../shared/geo.js';
 
@@ -19,19 +20,21 @@ async function call(api, method, path, body, token) {
 
 async function runBus(api, email, i, { tickMs, speed, log }) {
   const { token } = await call(api, 'POST', '/auth/driver/login', { email, password: PASSWORD });
+  let from = null; // where the last trip ended: the next one runs back from there
   for (;;) {
     let trip = await call(api, 'GET', '/trips/driver/active', null, token);
     if (!trip) {
       const me = await call(api, 'GET', '/auth/driver/me', null, token);
-      const first = me.route?.stops?.[0];
-      if (first) trip = await call(api, 'POST', '/trips/start', { startLocation: { lat: first.lat, lng: first.lng } }, token).catch(() => null);
+      const stops = me.route?.stops || [];
+      const start = from || (i % 2 ? stops.at(-1) : stops[0]); // half the fleet starts on its return trip
+      if (start) trip = await call(api, 'POST', '/trips/start', { startLocation: { lat: start.lat, lng: start.lng } }, token).catch(() => null);
     }
     const path = trip?.routeDetails?.path;
     if (!path || path.length < 2) { log(`${email}: no route path, retrying in 30 s`); await new Promise((r) => setTimeout(r, 30000)); continue; }
     const index = buildPathIndex(path);
     // Stagger buses along their routes so the demo looks lived-in.
     let along = trip.live?.location ? 0 : index.total * ((i * 0.23) % 0.8);
-    log(`Bus ${trip.bus.busNumber} on route ${trip.routeDetails.number}: ${(index.total / 1000).toFixed(1)} km`);
+    log(`Bus ${trip.bus.busNumber} on route ${trip.routeDetails.number} (${trip.direction}): ${(index.total / 1000).toFixed(1)} km`);
     while (along < index.total) {
       const jitter = (Math.random() - 0.5) * 0.00004;
       const p = pointAtDistance(index, along);
@@ -42,6 +45,7 @@ async function runBus(api, email, i, { tickMs, speed, log }) {
     }
     const end = pointAtDistance(index, index.total);
     await call(api, 'POST', `/trips/${trip._id}/end`, { endLocation: end }, token).catch((e) => log(e.message));
+    from = end;
     log(`Bus ${trip.bus.busNumber} finished route ${trip.routeDetails.number}; next trip in 20 s`);
     await new Promise((r) => setTimeout(r, 20000));
   }

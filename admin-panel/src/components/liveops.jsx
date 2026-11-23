@@ -113,7 +113,8 @@ export function ReplayScrubber({ secondsBack, onChange, events, note }) {
           className="replay-range absolute inset-0 w-full" />
       </div>
       <button type="button" onClick={() => onChange(0)} className={cn('font-semibold', secondsBack ? 'text-ink-soft hover:text-ink' : 'text-neon-lime')}>LIVE</button>
-      {note && <span className="text-[12px] text-ink-faint max-w-[200px] leading-tight">{note}</span>}
+      {/* Fixed width, always rendered: a note appearing mid-drag must not resize the slider under the pointer. */}
+      <span className="text-[12px] text-ink-faint w-[170px] shrink-0 leading-tight">{note}</span>
     </div>
   );
 }

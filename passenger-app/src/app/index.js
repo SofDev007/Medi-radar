@@ -8,7 +8,7 @@ import { useTranslation } from 'react-i18next';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { PASSENGER_PANIC_REASONS } from 'transit-shared/incidents.js';
-import { haversine, slicePath } from 'transit-shared/geo.js';
+import { haversine, slicePath, forDirection } from 'transit-shared/geo.js';
 import T from 'transit-shared/native/T';
 import { Ticket, RouteBadge, Stamp, Banner, Button } from 'transit-shared/native/ui';
 import PanicButton from 'transit-shared/native/PanicButton';
@@ -206,7 +206,8 @@ export default function Home() {
     const eta = chipStopId ? b.etas?.find((e) => e.stopId === chipStopId) : null;
     const relevant = option ? optionRoutes.has(b.routeId) : Boolean(eta);
     return {
-      id: b.busId, lat: b.location.lat, lng: b.location.lng, label: b.busNumber, relevant, path: busPaths[b.routeId],
+      id: b.busId, lat: b.location.lat, lng: b.location.lng, label: b.busNumber, relevant,
+      path: forDirection({ path: busPaths[b.routeId] }, b.direction).path,
       stock: routeStock(busRouteObj(b)).stock, color: neonForRoute(busRouteObj(b)), selected: b.busId === busId,
       dim: (option && !optionRoutes.has(b.routeId)) || ageSec(b.lastUpdate) > 120,
       chip: eta && relevant ? { route: b.routeNumber ?? b.busNumber, text: t('common.minutes', { count: Math.max(0, eta.minutes) }), priority: eta.minutes } : null
@@ -270,7 +271,7 @@ export default function Home() {
     if (!user) { router.push('/signin'); setNotice(t('passenger.notifyNeedsSignIn')); return; }
     if (!hasPass) { router.push('/pass'); setNotice(t('pass.lockTitle')); return; }
     try {
-      await api.post('/passenger/arrival-alerts', { routeId: leg.route.id, stopId: leg.from.id, stopsBefore: 2 });
+      await api.post('/passenger/arrival-alerts', { routeId: leg.route.id, stopId: leg.from.id, stopsBefore: 2, direction: leg.route.direction });
       setNotice(t('passenger.notifySet'));
     } catch (e) {
       setNotice(errorText(e, t));
@@ -303,7 +304,7 @@ export default function Home() {
 
   if (bus) {
     const etas = new Map((bus.etas || []).map((e) => [e.stopId, e.minutes]));
-    const ahead = busRoute?.stops?.filter((s) => etas.has(s.id)) || [];
+    const ahead = forDirection(busRoute, bus.direction)?.stops?.filter((s) => etas.has(s.id)) || [];
     header = (
       <View style={styles.sheetHead}>
         <RouteBadge route={busRouteObj(bus)} size="lg" />

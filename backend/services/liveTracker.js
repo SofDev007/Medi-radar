@@ -34,7 +34,8 @@ export const CONFIG = {
   arrivalWatchTtlMs: 2 * 60 * 60 * 1000
 };
 
-const routes = new Map(); // routeId -> compiled route
+export const DIRECTIONS = ['outbound', 'return'];
+const routes = new Map(); // `${routeId}:${direction}` -> compiled route
 const byDriver = new Map(); // driverId -> trip state
 const byBus = new Map(); // busId -> trip state (same objects)
 let historyBuffer = [];
@@ -45,16 +46,18 @@ const id = (v) => (v ? String(v._id ?? v) : null);
 
 // ---------- Routes ----------
 
-/** Load and compile a route: stops with their distance along the path. Cached. */
-export async function getRoute(routeId) {
+/** Load and compile a route (both directions): stops with their distance along the path. Cached. */
+export async function getRoute(routeId, direction = 'outbound') {
   const key = id(routeId);
   if (!key) return null;
-  if (routes.has(key)) return routes.get(key);
+  const cacheKey = `${key}:${direction === 'return' ? 'return' : 'outbound'}`;
+  if (routes.has(cacheKey)) return routes.get(cacheKey);
   const doc = await Route.findById(key).populate('stops.stop');
   if (!doc) return null;
-  const compiled = compileRoute(doc);
-  routes.set(key, compiled);
-  return compiled;
+  const outbound = compileRoute(doc);
+  routes.set(`${key}:outbound`, outbound);
+  routes.set(`${key}:return`, reverseRoute(outbound));
+  return routes.get(cacheKey);
 }
 
 export function compileRoute(doc) {
@@ -76,6 +79,7 @@ export function compileRoute(doc) {
   }
   return {
     id: id(doc),
+    direction: 'outbound',
     number: doc.number,
     name: doc.name,
     color: doc.color,
@@ -85,9 +89,32 @@ export function compileRoute(doc) {
   };
 }
 
+/**
+ * The return trip of a compiled route: the same stops and path driven back from the last stop.
+ * Timetables are for the outbound trip, so a return trip runs unscheduled (live ETAs, no delay).
+ */
+export function reverseRoute(route) {
+  const total = route.index?.total ?? 0;
+  const lastOffset = route.stops.at(-1)?.offsetMinutes ?? 0;
+  return {
+    ...route,
+    direction: 'return',
+    departures: [],
+    stops: route.stops.map((s) => ({ ...s, along: total - s.along, offsetMinutes: Math.max(0, lastOffset - s.offsetMinutes) })).reverse(),
+    index: route.index && buildPathIndex(route.index.points.map((p) => [p.lng, p.lat]).reverse())
+  };
+}
+
+/** Which way a trip starting at `point` runs: back towards the first stop if it starts nearer the last one. */
+export function directionFrom(route, point) {
+  const stops = route?.stops;
+  if (point?.lat == null || !stops || stops.length < 2) return 'outbound';
+  return haversine(point, stops.at(-1)) < haversine(point, stops[0]) ? 'return' : 'outbound';
+}
+
 /** Call after a route or its stops change. */
 export function invalidateRoute(routeId) {
-  if (routeId) routes.delete(id(routeId));
+  if (routeId) DIRECTIONS.forEach((d) => routes.delete(`${id(routeId)}:${d}`));
   else routes.clear();
   for (const state of byDriver.values()) {
     if (!routeId || state.routeId === id(routeId)) state.route = undefined; // reload lazily
@@ -103,6 +130,7 @@ function newState({ trip, busId, busNumber, route, position, lastPingAt }) {
     busId,
     busNumber,
     routeId: route?.id || null,
+    direction: trip.direction || 'outbound',
     route,
     startTime: trip.startTime,
     scheduledDeparture: trip.scheduledDeparture || null,
@@ -126,9 +154,14 @@ function newState({ trip, busId, busNumber, route, position, lastPingAt }) {
   };
 }
 
-/** Register a just-started trip. `bus` must have busNumber and route. Sets trip.route/scheduledDeparture. */
-export async function startTrip(trip, bus) {
-  const route = await getRoute(bus.route);
+/**
+ * Register a just-started trip. `bus` must have busNumber and route. Sets trip.route/direction/scheduledDeparture.
+ * direction: 'outbound' | 'return'; by default the end of the route the trip starts nearer to.
+ */
+export async function startTrip(trip, bus, { direction } = {}) {
+  const outbound = await getRoute(bus.route);
+  trip.direction = DIRECTIONS.includes(direction) ? direction : directionFrom(outbound, trip.startLocation);
+  const route = trip.direction === 'return' ? await getRoute(bus.route, 'return') : outbound;
   trip.route = route?.id || null;
   trip.scheduledDeparture = route ? matchScheduledDeparture(route.departures, trip.startTime) : null;
   const state = newState({
@@ -156,7 +189,7 @@ export async function getActiveTrip(driverId) {
   if (!isDriverAllowed(driver)) return null;
   const trip = await Trip.findOne({ driver: key, status: 'active' }).populate('bus', 'busNumber route currentLocation');
   if (!trip?.bus) return null;
-  const route = await getRoute(trip.bus.route);
+  const route = await getRoute(trip.bus.route, trip.direction);
   const loc = trip.bus.currentLocation;
   const state = newState({
     trip,
@@ -247,6 +280,8 @@ export function busView(state) {
     tripId: state.tripId,
     routeId: state.routeId,
     routeNumber: route?.number ?? null,
+    direction: state.direction,
+    towards: route?.stops?.at(-1)?.name ?? null, // where this trip ends
     location: state.position ? { ...state.position, timestamp: new Date(state.lastPingAt) } : null,
     speed: Math.round((Date.now() - state.lastFixAt > CONFIG.speedFreshMs ? 0 : state.speed) * 3.6), // km/h
     heading: state.heading,
@@ -269,7 +304,7 @@ export async function recordPing(state, { lat, lng, speed = null, heading = 0, t
   const fixTime = Math.min(Number.isFinite(fixAt) ? fixAt : ts, Date.now()); // never in the future (clock skew)
   const point = { lat, lng };
 
-  if (state.route === undefined) state.route = await getRoute(state.routeId);
+  if (state.route === undefined) state.route = await getRoute(state.routeId, state.direction);
 
   // Speed: the phone's GPS speed when it reports one (Doppler: accurate, instant); otherwise distance /
   // time between FIXES. Arrival times are distorted by network delay and by fixes sent in batches.
@@ -348,18 +383,19 @@ export function getArrivals(stopId) {
     if (eta) {
       arrivals.push({
         busId: state.busId, busNumber: state.busNumber, routeId: state.routeId,
-        routeNumber: state.route?.number ?? null, minutes: eta.minutes
+        routeNumber: state.route?.number ?? null, direction: state.direction,
+        towards: state.route?.stops?.at(-1)?.name ?? null, minutes: eta.minutes
       });
     }
   }
   return arrivals.sort((a, b) => a.minutes - b.minutes);
 }
 
-/** Minutes until the next live bus on a route reaches a stop, no earlier than `afterMinutes`. */
-export function nextLiveArrival(routeId, stopId, afterMinutes = 0) {
+/** Minutes until the next live bus on a route (in `direction`, if given) reaches a stop, no earlier than `afterMinutes`. */
+export function nextLiveArrival(routeId, stopId, afterMinutes = 0, direction = null) {
   let best = null;
   for (const state of byBus.values()) {
-    if (state.routeId !== id(routeId)) continue;
+    if (state.routeId !== id(routeId) || (direction && state.direction !== direction)) continue;
     const eta = state.etas.find((e) => e.stopId === id(stopId));
     if (eta && eta.minutes >= afterMinutes - 1 && (!best || eta.minutes < best.minutes)) {
       best = { minutes: eta.minutes, busId: state.busId, busNumber: state.busNumber };
@@ -370,9 +406,10 @@ export function nextLiveArrival(routeId, stopId, afterMinutes = 0) {
 
 // ---------- Arrival alerts ("notify me when my bus is 2 stops away") ----------
 
-export function addArrivalWatch({ userId, routeId, stopId, stopsBefore = 2 }) {
+/** direction: only buses running that way (a bus on its way back doesn't take you onward); null = either. */
+export function addArrivalWatch({ userId, routeId, stopId, stopsBefore = 2, direction = null }) {
   arrivalWatches = arrivalWatches.filter((w) => !(w.userId === id(userId) && w.stopId === id(stopId)));
-  arrivalWatches.push({ userId: id(userId), routeId: id(routeId), stopId: id(stopId), stopsBefore, createdAt: Date.now() });
+  arrivalWatches.push({ userId: id(userId), routeId: id(routeId), stopId: id(stopId), stopsBefore, direction, createdAt: Date.now() });
 }
 
 export function removeArrivalWatch(userId, stopId) {
@@ -383,7 +420,7 @@ function checkArrivalWatches(state) {
   if (!state.route || !arrivalWatches.length) return;
   const fired = [];
   for (const w of arrivalWatches) {
-    if (w.routeId !== state.routeId) continue;
+    if (w.routeId !== state.routeId || (w.direction && w.direction !== state.direction)) continue;
     const stopIndex = state.route.stops.findIndex((s) => s.id === w.stopId);
     const stopsAway = stopIndex - state.nextStopIndex;
     if (stopIndex >= 0 && stopsAway >= 0 && stopsAway <= w.stopsBefore) {
