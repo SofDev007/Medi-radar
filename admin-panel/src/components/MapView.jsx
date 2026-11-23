@@ -178,7 +178,12 @@ export default function MapView({
         entry.pos = target;
         entry.pathKey = key;
         trails.current?.push(bus.id, target, color);
-        glideMarker(entry, target, { ms: GLIDE_MS, path: bus.path, onFrame: (p, onRoute) => trails.current?.head(bus.id, p, onRoute) });
+        // jump (replay scrubbing): place the marker at once, finding it anywhere on its route. A glide would
+        // restart on every scrub step and, searching only just behind the bus, fall off the route and back.
+        if (bus.jump) entry.onRoute = null;
+        glideMarker(entry, target, {
+          ms: GLIDE_MS, path: bus.path, reduceMotion: bus.jump || undefined, onFrame: (p, onRoute) => trails.current?.head(bus.id, p, onRoute)
+        });
       }
     }
     for (const [id, entry] of busMarkers.current) {

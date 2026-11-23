@@ -1,8 +1,10 @@
 // Disha: chat with the AI bus assistant. The server answers with our own journey planner and live data;
-// this screen only keeps the visible conversation (sent back each turn).
+// this screen keeps the conversation (sent back each turn). Today's chat is saved on the device and shown
+// again when Disha is reopened; a new session starts on the next day.
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Keyboard, Platform, Pressable, ScrollView, TextInput, View } from 'react-native';
 import { useRouter } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTranslation } from 'react-i18next';
 import { Ionicons } from '@expo/vector-icons';
 import Screen from 'transit-shared/native/Screen';
@@ -14,6 +16,9 @@ import { usePosition } from '../lib/position';
 import { api, errorText } from '../lib/api';
 
 const SUGGESTIONS = ['route', 'nearest', 'features', 'pass'];
+const chatKey = (userId) => `disha.chat.${userId}`;
+const today = () => new Date().toDateString(); // local calendar day: the session
+const KEEP = 100; // messages kept per session
 
 // Android is edge-to-edge, so the window doesn't shrink for the keyboard: lift the input bar ourselves.
 function useAndroidKeyboardHeight() {
@@ -50,14 +55,35 @@ export default function Disha() {
   const scroll = useRef(null);
   const firstName = String(user?.name || '').trim().split(/\s+/)[0];
   const [messages, setMessages] = useState([]); // [{ role: 'user'|'assistant', content }]
+  const [day, setDay] = useState(today);
+  const [restoredFor, setRestoredFor] = useState(null); // user whose saved chat is loaded
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
+  // Restore today's session; a chat from an earlier day is dropped.
+  useEffect(() => {
+    if (!user?.id) return;
+    AsyncStorage.getItem(chatKey(user.id))
+      .then((raw) => {
+        const saved = raw ? JSON.parse(raw) : null;
+        setMessages(saved?.day === today() && Array.isArray(saved.messages) ? saved.messages : []);
+        setDay(today());
+      })
+      .catch(() => {})
+      .finally(() => setRestoredFor(user.id));
+  }, [user?.id]);
+  useEffect(() => {
+    if (!user?.id || restoredFor !== user.id) return; // never overwrite a saved chat before it is read
+    AsyncStorage.setItem(chatKey(user.id), JSON.stringify({ day, messages: messages.slice(-KEEP) })).catch(() => {});
+  }, [user?.id, restoredFor, day, messages]);
+
   const send = async (raw) => {
     const content = String(raw ?? text).trim();
     if (!content || busy) return;
-    const next = [...messages, { role: 'user', content }];
+    const newDay = day !== today(); // the screen stayed open past midnight: start today's session
+    if (newDay) setDay(today());
+    const next = [...(newDay ? [] : messages), { role: 'user', content }];
     setMessages(next);
     setText('');
     setError('');

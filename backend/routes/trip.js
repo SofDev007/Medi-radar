@@ -21,7 +21,7 @@ const populateTrip = (query) => query
 
 /** Full route (ordered stops + path) for the driver's navigation screen. */
 const driverTripJson = async (trip) => {
-  const route = trip.route ? await liveTracker.getRoute(trip.route._id ?? trip.route) : null;
+  const route = trip.route ? await liveTracker.getRoute(trip.route._id ?? trip.route, trip.direction) : null;
   return {
     ...trip.toJSON(),
     routeDetails: route && {
@@ -35,7 +35,8 @@ const driverTripJson = async (trip) => {
 
 // ---------- Driver ----------
 
-router.post('/start', authenticateDriver, coords('startLocation'), validate, async (req, res) => {
+// direction (optional): 'outbound' | 'return'; by default the end of the route the bus starts nearer to.
+router.post('/start', authenticateDriver, coords('startLocation'), body('direction').optional().isIn(liveTracker.DIRECTIONS), validate, async (req, res) => {
   const driver = req.user;
   if (!driver.assignedBus) {
     return res.status(400).json({ message: 'No bus assigned to driver' });
@@ -60,10 +61,10 @@ router.post('/start', authenticateDriver, coords('startLocation'), validate, asy
     startLocation: { lat, lng },
     status: 'active'
   });
-  await liveTracker.startTrip(trip, bus); // sets trip.route + scheduledDeparture
+  await liveTracker.startTrip(trip, bus, { direction: req.body.direction }); // sets trip.route, direction, scheduledDeparture
   await trip.save();
 
-  getIO()?.emit('trip-started', { tripId: trip._id, busId: bus._id, routeId: trip.route });
+  getIO()?.emit('trip-started', { tripId: trip._id, busId: bus._id, routeId: trip.route, direction: trip.direction });
   res.status(201).json(await driverTripJson(await populateTrip(Trip.findById(trip._id))));
 });
 

@@ -96,13 +96,18 @@ export function subPath(index, from, to) {
   return out;
 }
 
-/** The part of a path between two points (e.g. boarding and alighting stops), as [[lng, lat], ...]. */
-export function slicePath(coordinates, from, to) {
+/**
+ * The part of a path between two points (e.g. boarding and alighting stops), as [[lng, lat], ...].
+ * `to` before `from` (a return trip) is sliced from the reversed path.
+ */
+export function slicePath(coordinates, from, to, reversed = false) {
   const index = buildPathIndex(coordinates);
   if (!index) return [];
   const a = projectOntoPath(index, from);
   const b = projectOntoPath(index, to, a.along);
-  if (b.along <= a.along) return [[from.lng, from.lat], [to.lng, to.lat]];
+  if (b.along <= a.along) {
+    return reversed ? [[from.lng, from.lat], [to.lng, to.lat]] : slicePath([...coordinates].reverse(), from, to, true);
+  }
   const out = [[pointAtDistance(index, a.along).lng, pointAtDistance(index, a.along).lat]];
   for (let i = a.segment + 1; i <= b.segment; i++) out.push([index.points[i].lng, index.points[i].lat]);
   const end = pointAtDistance(index, b.along);
@@ -128,4 +133,13 @@ export function walkMinutes(meters) {
 export function formatDistance(meters) {
   if (meters < 1000) return `${Math.round(meters / 10) * 10} m`;
   return `${(meters / 1000).toFixed(1)} km`;
+}
+
+/**
+ * A route ({ stops, path }) as travelled in `direction`. The return trip is not a separate route:
+ * it runs the same stops and road path in reverse, from the last stop back to the first.
+ */
+export function forDirection(route, direction) {
+  if (direction !== 'return' || !route) return route;
+  return { ...route, direction, stops: [...(route.stops || [])].reverse(), path: [...(route.path || [])].reverse() };
 }

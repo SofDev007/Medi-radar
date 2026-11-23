@@ -22,13 +22,14 @@ router.post('/push-token', [body('token').custom(isExpoPushToken)], validate, as
 router.post('/arrival-alerts', [
   body('routeId').custom(isObjectId),
   body('stopId').custom(isObjectId),
-  body('stopsBefore').optional().isInt({ min: 0, max: 5 })
+  body('stopsBefore').optional().isInt({ min: 0, max: 5 }),
+  body('direction').optional().isIn(['outbound', 'return'])
 ], validate, async (req, res) => {
-  const { routeId, stopId, stopsBefore = 2 } = req.body;
+  const { routeId, stopId, stopsBefore = 2, direction = null } = req.body;
   if (!await Route.exists({ _id: routeId, 'stops.stop': stopId })) {
     return res.status(400).json({ message: 'That stop is not on this route' });
   }
-  addArrivalWatch({ userId: req.user._id, routeId, stopId, stopsBefore: Number(stopsBefore) });
+  addArrivalWatch({ userId: req.user._id, routeId, stopId, stopsBefore: Number(stopsBefore), direction });
   res.status(201).json({ message: 'We will notify you when the bus is close' });
 });
 

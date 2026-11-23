@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
 import { X, Phone, History, List } from 'lucide-react';
 import { neonForRoute, neon } from '@shared/theme/tokens.js';
+import { forDirection } from '@shared/geo.js';
 import { useFleet, attentionRank } from '@/lib/useFleet';
 import { useRealtimeEvents, incidentTitle } from '@/lib/realtime';
 import { locationAPI } from '@/lib/api';
@@ -63,7 +64,9 @@ export default function LiveMap() {
 
   const visible = routeFilter ? fleet.filter((b) => b.route?._id === routeFilter) : fleet;
   const selected = fleet.find((b) => b._id === selectedId) || null;
-  const selectedRoute = selected ? routes[selected.route?._id] : null;
+  // Route as this bus drives it: reversed on a return trip.
+  const busRoute = (b) => forDirection(routes[b.route?._id], b.live?.direction);
+  const selectedRoute = selected ? busRoute(selected) : null;
 
   const select = (id) => {
     setTrail(null);
@@ -202,8 +205,8 @@ export default function LiveMap() {
     if (!loc) return null;
     const eta = b.live?.nextStop?.etaMinutes;
     return {
-      id: b._id, lat: loc.lat, lng: loc.lng, label: b.busNumber, path: routes[b.route?._id]?.path,
-      color: neonForRoute(b.route), selected: b._id === selectedId,
+      id: b._id, lat: loc.lat, lng: loc.lng, label: b.busNumber, path: busRoute(b)?.path,
+      color: neonForRoute(b.route), selected: b._id === selectedId, jump: Boolean(replayAt),
       alert: b.status === 'breakdown' || sos?.busId === b._id, stale: !replayAt && ageSeconds(b.live.lastUpdate) > 60,
       chip: !replayAt && eta != null ? { route: b.route?.number ?? b.busNumber, text: `${eta} min`, priority: (b._id === selectedId ? -1 : 0) + attentionRank(b) } : null
     };
@@ -258,7 +261,7 @@ export default function LiveMap() {
               {loading ? <RuledLines rows={6} /> : visible.length === 0 ? (
                 <EmptyTicket title="No buses on the road">They appear when a driver starts a trip.</EmptyTicket>
               ) : visible.map((bus) => (
-                <FleetTicket key={bus._id} bus={bus} route={routes[bus.route?._id]} compact selected={bus._id === selectedId}
+                <FleetTicket key={bus._id} bus={bus} route={busRoute(bus)} compact selected={bus._id === selectedId}
                   onClick={() => select(bus._id === selectedId ? null : bus._id)} />
               ))}
             </motion.section>

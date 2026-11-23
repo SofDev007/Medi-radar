@@ -1,9 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { haversine, buildPathIndex, projectOntoPath } from '../../shared/geo.js';
+import { haversine, buildPathIndex, projectOntoPath, slicePath } from '../../shared/geo.js';
 import { initialWarningState, stepWarnings } from '../../shared/locationWarnings.js';
 import { departureDates, matchScheduledDeparture, nextScheduledArrival } from '../services/schedule.js';
 import { buildGraph, planWithGraph } from '../services/journeyPlanner.js';
+import { reverseRoute, directionFrom } from '../services/liveTracker.js';
 import { saveDocument, readDocument } from '../services/storage.js';
 
 // ---------- storage ----------
@@ -183,4 +184,32 @@ test('Disha durations read as hours past 60 minutes', async () => {
   assert.equal(duration(60), '1 h');
   assert.equal(duration(291), '4 h 51 min');
   assert.equal(duration(325), '5 h 25 min');
+});
+
+test('return trip: the same route reversed, ridden from the last stop back to the first', () => {
+  const route = { ...A, index: buildPathIndex(A.stops.map((s) => [s.lng, s.lat])) };
+  const back = reverseRoute(route);
+  assert.equal(back.id, 'A');
+  assert.equal(back.direction, 'return');
+  assert.deepEqual(back.stops.map((s) => s.id), ['x', 'a2', 'a1', 'a0']);
+  assert.deepEqual(back.stops.map((s) => s.offsetMinutes), [0, 3, 6, 9]);
+  assert.ok(back.stops.every((s, i) => i === 0 || s.along > back.stops[i - 1].along));
+  assert.deepEqual(back.departures, []);
+  // A trip starting nearer the last stop is a return trip.
+  assert.equal(directionFrom(route, A.stops[3]), 'return');
+  assert.equal(directionFrom(route, A.stops[0]), 'outbound');
+
+  const [best] = planWithGraph(buildGraph([route, back]), { from: A.stops[3], to: A.stops[0], waitFor: fixedWait(2) });
+  const ride = best.legs.find((l) => l.type === 'ride');
+  assert.equal(ride.route.id, 'A');
+  assert.equal(ride.route.direction, 'return');
+  assert.equal(ride.route.towards, 'a0');
+  assert.equal(ride.from.id, 'x');
+  assert.equal(ride.to.id, 'a0');
+});
+
+test('slicePath: a return leg (to before from) follows the path backwards', () => {
+  const out = slicePath([[76, 30], [76.01, 30], [76.02, 30]], { lat: 30, lng: 76.02 }, { lat: 30, lng: 76 })
+    .map(([lng, lat]) => [+lng.toFixed(6), +lat.toFixed(6)]);
+  assert.deepEqual(out, [[76.02, 30], [76.01, 30], [76, 30]]);
 });
