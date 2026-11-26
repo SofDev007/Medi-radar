@@ -5,7 +5,7 @@
 import { buildPathIndex, pointAtDistance } from '../../shared/geo.js';
 
 const PASSWORD = process.env.DEMO_DRIVER_PASSWORD || 'Demo@1234';
-const demoDrivers = (n) => Array.from({ length: n }, (_, i) => `demo.driver${i + 1}@transit.local`);
+export const demoDrivers = (n) => Array.from({ length: n }, (_, i) => `demo.driver${i + 1}@transit.local`);
 
 async function call(api, method, path, body, token) {
   const res = await fetch(api + path, {
@@ -18,8 +18,11 @@ async function call(api, method, path, body, token) {
   return data;
 }
 
-async function runBus(api, email, i, { tickMs, speed, log }) {
-  const { token } = await call(api, 'POST', '/auth/driver/login', { email, password: PASSWORD });
+async function runBus(api, email, i, { tickMs, speed, log, tokenFor }) {
+  const token = tokenFor
+    ? await tokenFor(email) // inside the server: no password, no login rate limit
+    : (await call(api, 'POST', '/auth/driver/login', { email, password: PASSWORD })).token;
+  if (!token) throw new Error('no such approved demo driver');
   let from = null; // where the last trip ended: the next one runs back from there
   for (;;) {
     let trip = await call(api, 'GET', '/trips/driver/active', null, token);
@@ -51,10 +54,16 @@ async function runBus(api, email, i, { tickMs, speed, log }) {
   }
 }
 
-/** Start all demo buses. speed in m/s (default 14 ≈ 50 km/h, a little fast so the demo moves). */
-export function simulate({ api = 'http://localhost:5000/api', drivers = demoDrivers(12), tickMs = 3000, speed = 14, log = console.log } = {}) {
+/**
+ * Start all demo buses. speed in m/s (default 14 ≈ 50 km/h, a little fast so the demo moves).
+ * tokenFor(email) -> driver token, for running inside the server (see server.js DEMO_SIMULATOR).
+ * A bus that hits an error (server restarting, network blip) starts again 30 s later.
+ */
+export function simulate({ api = 'http://localhost:5000/api', drivers = demoDrivers(12), tickMs = 3000, speed = 14, log = console.log, tokenFor } = {}) {
   drivers.forEach((email, i) => {
-    setTimeout(() => runBus(api, email, i, { tickMs, speed, log }).catch((e) => log(`${email}: ${e.message}`)), i * 700);
+    const run = () => runBus(api, email, i, { tickMs, speed, log, tokenFor })
+      .catch((e) => { log(`${email}: ${e.message}; retrying in 30 s`); setTimeout(run, 30000); });
+    setTimeout(run, i * 700);
   });
 }
 

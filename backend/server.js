@@ -101,4 +101,25 @@ httpServer.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
 
+// Demo: DEMO_SIMULATOR=true drives the seeded demo buses from inside this server, so buses run
+// without anyone's PC (Render's free plan has no background workers). Demo drivers get tokens issued
+// here: no password needed, no login rate limit. Leave it off once real drivers use the app.
+if (process.env.DEMO_SIMULATOR === 'true') {
+  ready.then(async () => {
+    const [{ simulate, demoDrivers }, { default: Driver }, { signToken, isDriverAllowed }] = await Promise.all([
+      import('./scripts/simulate.js'), import('./models/Driver.js'), import('./middleware/auth.js')
+    ]);
+    simulate({
+      api: `http://127.0.0.1:${PORT}/api`,
+      drivers: demoDrivers(Number(process.env.DEMO_SIMULATOR_DRIVERS) || 12),
+      tokenFor: async (email) => {
+        const driver = await Driver.findOne({ email }).select('status isActive');
+        return isDriverAllowed(driver) ? signToken(driver._id, 'driver') : null;
+      },
+      log: (m) => console.log(`sim: ${m}`)
+    });
+    console.log('Demo simulator on (DEMO_SIMULATOR=true)');
+  });
+}
+
 export { app, httpServer, io };

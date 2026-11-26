@@ -83,13 +83,13 @@
       "policy": "appVersion"
     },
     "updates": {
-      "url": "https://u.expo.dev/5d7b867b-5b0d-4bb3-92f5-4300d2ab0870"
+      "url": "https://u.expo.dev/62d811d0-b1d9-41c6-a5bc-f0e34e2f7a15"
     },
     "extra": {
       "eas": {
-        "projectId": "5d7b867b-5b0d-4bb3-92f5-4300d2ab0870"
+        "projectId": "62d811d0-b1d9-41c6-a5bc-f0e34e2f7a15"
       }
     },
-    "owner": "sofdev007"
+    "owner": "devansh_korde"
   }
 }
